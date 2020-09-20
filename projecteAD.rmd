@@ -1,0 +1,357 @@
+---
+title: \textit{Identificació de whiskies de contraban}
+author: \textit{Fernando Gastón \& Marc Gàllego}
+subtitle: "Projecte d'Anàlisi de Dades - GCED"
+output:
+  pdf_document:
+    number_sections: true
+    highlight: haddock
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      fig.align = 'center',
+                      fig.height = 5)
+```
+
+\newpage
+\tableofcontents
+\newpage
+
+# Introducció
+
+El principal objectiu d'aquest projecte és el de discriminar mescles de whisky de contraban d'entre un conjunt de whiskies de destil·leries escoceses.
+
+Per a fer-ho disposem d'un dataset sobre la concentració de diferents químics en la composició dels whikies analitzats. És per això, que un objectiu alternatiu del projecte és determinar quins dels químics analitzats són més útils a l'hora de classificar els whiskies de contraban.
+
+
+# Descripció del conjunt de dades
+
+Les dades utilitzades provenen d'un estudi realitzat per investigadors de The James Hutton Institute al Regne Unit i estan continguts al fitxer "`whiskey_chemo.csv`". Aquest conté informació de la composició química de whiskies provinents de 32 destil·leries escoceses de les quals 5 són de contraban.
+
+El fet que el nostre conjunt de dades estigui tan descompensat serà un fet que condicionarà molt el projecte i que, en general, no és gaire desitjable. Només tenim 5 observacions de whiskies de contraban, un nombre més petit i tot que el de variables.
+
+```{r}
+raw <- read.csv("whiskey_chemo.csv", sep=',')
+
+```
+
+A més, per cada destil·leria tenim un identificador numèric (`brandID`), el tipus de whisky (`type`), una variable indicadora respecte al contraban (`counterfeit`, 1 és contraban) i la concentració d'11 elements químics (`P`, `S`, `Cl`, `K`, `Ca`, `Mn`, `Fe`, `Cu`, `Zn`, `Br`, `Rb`).
+
+```{r}
+#rownames(raw)<-raw$distillery
+dd <- raw
+dd <- dd[,4:15]
+dd$counterfeit<-as.factor(dd$counterfeit)
+n<-dim(dd)[1]
+p<-dim(dd)[2]
+
+```
+
+Per cadascun d'aquests elements també disposem una variable indicadora (`P1`-`Rb1`) que indica si la concentració obtinguda per l'element és inferior al límit de detecció de la maquinària utilitzada. Això vol dir que concentracions baixes no són determinades adequadament (a efectes pràctics són 0). Això pot generar problemes en l'anàlisi de dades, per exemple, si es fan servir logaritmes. Tot i això, en el nostre cas són molt poques les dades per sota del límit de detecció i, a més, ja han estat imputades amb valors positius. Per exemple, per les dades del fòsfor (`P`) no s'observa aquest límit de detecció ja que s'han imputat les dades, sinó hauria de constar 0 o <0.0001 (o semblant):
+
+```{r out.height="250px", fig.width=6, fig.align="center"}
+dd.factor<-raw[,16:26] # Variables indicadores
+boxplot(dd[dd.factor[,"P1"]==0,"P"], dd[dd.factor[,"P1"]==1,"P"], main="Fósfor (P)",
+        xlab="Variable indicadora", cex.main=0.8, cex.lab=0.6)
+
+```
+
+Així doncs, no les tindrem en compte per a dur a terme els anàlisis.
+
+El dataset resultant és:
+
+```{r}
+require(knitr)
+kable(head(dd))
+
+```
+
+Respecte al tractament de dades previ a l'anàlisi, possibles dades faltants, no ens n'hem de preocupar ja que no n'hi ha.
+
+# Anàlisi
+
+En aquest apartat aplicarem els mètodes d'anàlisi de dades estudiats a l'assignatura. S'intercalarà part del codi utilitzat (la resta serà a l'annex) amb les explicacions pertinents sobre els mètodes, la seva aplicació i la interpretació dels resultats obtinguts.
+
+## Anàlisi exploratori
+
+Com l'objectiu d'aquest treball es separar les dades de contraban, el primer que farem serà visualitzar i explorar les dades per veure si amb la informació disponible podem fer-ho.
+
+El primer que farem serà un simple scatter plot de tots els parells de variables (amb la funció `pairs`) per veure si hi observem una separació natural dels grups (en taronja el contraban):
+
+```{r out.height="320px"}
+pairs(dd[,c(2:12)], col=ifelse(dd$counterfeit==0, "orange", "blue"))
+
+```
+
+Tot i que no s'aprecia gaire bé el detall (per la gran quantitat de plots) sí que podem observar que a tots els plots on intervé la variable `S` s'observa una bona separació dels grups, la qual cosa indica que probablement ens serà útil a l'hora de classificar les dades de contraban.
+
+Per tal de fer una visualització més acurada de les dades farem servir la tècnica del Anàlisi de Components Principals (PCA) per tenir una representació de les dades en un espai de menys dimensions (2 o 3 dimensions) on es representi una gran variabilitat de les dades.
+
+Aquesta tècnica permet reduir la dimensionalitat de les dades generant unes noves variables (els components principals) que són incorrelats i estan ordenats en funció del percentatge de la variancia de les dades originals que expliquen. D'aquesta forma podem obtenir en poques dimensions una part important de la variabilitat observada en les dades. El biplot resultant de l'anàlisi de components principals es:
+
+```{r fig.height=5, fig.width=5}
+pca<-princomp(dd[,2:12])
+library(pca3d)
+pca2d(pca, group=dd$counterfeit, biplot=TRUE, asp=1)
+
+```
+
+De les fletxes del biplot podem veure que els dos primers components principals són formats, quasi exclusivament, per una única variable, `K` i `S` respectivament:
+
+```{r}
+kable(pca$loadings[c("S", "K"),1:2])
+
+```
+
+Com ja podíem deduir del biplot, els coeficients per aquestes variables en els dos primers components principals són molt propers a 1. Per tant, aquest biplot és pràcticament igual al scatter plot entre les variables `S` i `K` en la matriu de plots realitzada amb `pairs`:
+
+```{r}
+plot(dd$K, dd$S, col=ifelse(dd$counterfeit==0, "orange", "blue"))
+```
+
+Cadascun dels components principals explica el següent percentatge de la variancia total:
+
+```{r}
+tab <- as.data.frame(100*(pca$sdev)^2/sum((pca$sdev)^2))
+colnames(tab) <- c("% Var explicada")
+kable(tab) #Variança explicada pels components
+
+```
+
+Per tant, amb aquests dos primers components principals (els que hem graficats al biplot) queda representat el 99.7% de la variabilitat de les dades.
+
+Una altra tècnica que ens pot servir per veure si existeixen diferències
+
+Així doncs, a partir del biplot, veiem que les dades són, aparentment, fàcilment separables i que podrem classificar els whiskies fent servir les dades donades.
+
+## Anàlisi discriminants
+
+Per fer la classificació farem servir els dos mètodes d'anàlisi discriminant estudiats (`lda`, `qda`).
+
+Primer, estudiarem el cas del discriminant lineal o LDA. Aquest classificador es basa en assumir normalitat multivariant per les dades de cada grup, assumint que per cada grup la matriu de covariàncies és igual. Una observació serà, doncs, classificada al grup pel qual maximitzi la funció de distribució. Això dóna lloc a fronteres de decisió lineals, vet aquí el nom de la tècnica. Vegem primer l'error de classificació que es cometria en aplicar LDA a les nostres dades:
+
+```{r}
+require(MASS)
+lda <- lda(scale(dd[,-1]), grouping=dd$counterfeit)
+plot(lda)
+
+```
+
+En aquest plot podem observar un histograma del discriminant lineal per cada grup de dades (contraban / no contraban). Veiem que no hi ha solapament i, doncs, no hi ha errors de classificació a les dades d'entrenament. Per comprovar això últim generarem la matriu de confusió:
+
+```{r}
+kable(table(predict(lda)$class,dd$counterfeit))
+
+```
+
+La matriu de confusió és diagonal. Això vol dir que les prediccions del LDA es corresponen amb els grups mètode reporta un error de training del 0%.
+
+Com hem estandarditzat les dades abans d'aplicar `lda`, podem interpretar els coeficients del discriminant lineal associats a cadascuna de les variables com la importància que tenen cadascuna d'aquestes en la discriminació. És a dir, com més alt sigui el coeficient associat a una variable, major serà l'efecte d'aquesta en el discriminant lineal i, per tant, en la classificació. En el nostre lda els coeficients per cada variable són:
+
+```{r}
+kable(lda$scaling)
+
+```
+
+Veiem que les variables que més influeixen en l'anàlisi discriminant són les variables `S` i `K` (curiosament coincideixen amb els dos primers components principals) i la que menys el clor `Cl`.
+
+Tot i això, aquest error de training no és una bona mesura per determinar la *performance* de la regla de classificació i hem de fer servir un conjunt de dades de test per estimar l'error de predicció en dades futures. Com nosaltres no disposem de conjunt de test farem servir el mètode *leave-one-out crossvalidation* que ens permetrà fer una estimació d'aquest error.
+
+```{r echo = TRUE}
+sum=0
+i = 0
+for (i in 1:n){
+  lda.mod<-lda(counterfeit~.,data=dd[-i,])
+  err<-predict(lda.mod, newdata=dd[i,])$class==dd[i,"counterfeit"]
+  sum=sum+err
+}
+(te.acc.lda<-sum/n)
+
+```
+
+L'error de test estimat resultant és del 6.45%. Com era d'esperar, aquest error és major que el del primer model, ja que s'està estimant l'error en unes dades sobre les quals el model no ha estat entrenat.
+
+A continuació, analitzarem la regla de classificació del `qda`. La diferència fonamental respecte del LDA és que en el QDA no s'assumeix que les matrius de covariàncies pels diferents grups siguin iguals. Farem el mateix procediment que hem utilitzat per estudiar LDA: primer aplicarem el classificador sobre totes les dades i, després, realitzarem el LOOCV per estimar-ne l'error de test.
+
+```{r eval=FALSE}
+qda <- qda(dd[,2:12], grouping=dd$counterfeit)
+
+```
+
+Quan intentem dur a terme el QDA, ens topem amb el següent error:
+  `some group is too small for 'qda'`
+Això es deu al fet que la implementació del QDA requereix tenir més observacions de cada grup que nombre de variables predictores:
+
+```{r eval=FALSE, echo = TRUE}
+#Fragment de codi en la implementació de la funció qda
+g <- as.factor(grouping)
+lev <- levels(g)
+counts <- as.vector(table(g))
+names(counts) <- lev
+if(any(counts < p+1)) stop("some group is too small for 'qda'")
+
+```
+
+En el nostre cas disposem d'11 variables predictores i tan sols de 5 observacions de la classe `counterfeit`. Per a solventar aquest problema, hauríem d'usar les 4 primeres components principals com a entrada per a fer la QDA. Tot i això, quan duem a terme el LOOCV, en algunes iteracions les dades amb què entrenarem el QDA només tindran 4 observacions de contraban (una d'elles serà utilitzada com a observació a predir). Per tant, haurem de fer servir únicament 3 components.
+
+```{r}
+require(klaR)
+qda <- qda(pca$scores[,1:3], grouping=dd$counterfeit)
+partimat(as.factor(counterfeit) ~ pca$scores[,1:3], data=dd, method="qda", plot.matrix = TRUE)
+
+```
+
+Veureu que hem afegit un plot de les regions de classificació fent servir la funció `partimat`. Els punts que quedessin a la zona blava serien classificats com a contraban i els punts que quedessin a la zona rosa no. Així doncs, apreciem com les decision boundaries del QDA no són lineals, com en el cas del LDA.
+
+
+A continuació, mostrem la matriu de confusió per les dades d'entrenament:
+
+```{r}
+kable(table(predict(qda)$class,dd$counterfeit))
+
+```
+
+A diferència de quan fèiem LDA, en aquest cas no podem interpretar la importància de les variables tan fàcilment, ja que els discriminants no són combinacions lineals d'aquestes.
+
+Si duem a terme l'equivalent al model anterior però usant LDA veurem la diferència entre els dos mètodes de classificació: aquí els decision boundaries són totalment lienals. Aquest model té un comportament molt similar a l'LDA original (probablement per les components principals tan particulars que ens han sortit).
+
+```{r}
+partimat(as.factor(counterfeit) ~ pca$scores[,1:3], data=dd, method="lda", plot.matrix = TRUE)
+```
+
+
+Aquesta és perfectament diagonal i, per tant, no s'han comès errors a la classificació (error de training del 0%).
+
+Ara duem a terme el LOOCV. A cada iteració fem el PCA de les $n-1$ observacions que tenim disponibles per entrenar el QDA amb aquestes i no pas les que hem dut a terme abans, ja que estaríem afegint en la regla de classificació informació de l'observació que volem predir.
+
+```{r warning = FALSE, echo=TRUE}
+sum=0
+for (i in 1:n){
+  comps <- princomp(dd[-i,2:12])$scores[,1:2]
+  qda.mod <- qda(comps, grouping=dd[-i,]$counterfeit)
+  obs <- princomp(dd[,2:12])$scores[i,1:2]
+  pred <-predict(qda.mod, newdata=obs)
+  err <- pred$class==dd[i,"counterfeit"]
+  sum <- sum+err
+}
+(te.err.qda <- sum/n)
+
+```
+
+
+Un cop estudiats els models QDA i LDA i les seves capacitats discriminants ens centrarem en analitzar la correctesa de les assumpcions que fan aquestes regles de classificació.
+
+Com ja hem esmentat, el LDA assumeix normalitat multivariant de les dades (chisq plot) i igualtat de matriu de covariàncies pels dos grups (BoxM package heplots o ). D'aquestes assumpcions, el QDA només en fa la primera.
+
+Per analitzar la normalitat multivariant farem servir el chi-squared plot que consisteix fer un plot dels quartils teòrics  contra les nostres dades fent servir la següent propietat de les dades multivariants:
+
+$$(x-\mu)'\Sigma^{-1}(x-\mu)~$$
+
+En cas que les nostres dades s'ajustin a una distribució normal multivariant, el plot resultarà en una línia. Farem servir la funció `chisqplot` que vam desenvolupar en la pràctica sobre anàlisi multivariant:
+
+```{r echo=TRUE}
+chisqplot<-function(data, main){
+  X <- as.matrix(data)
+  Xcentr <- scale(X, scale=F)
+  cov <- cov(X)
+  mineig <- min(abs(eigen(cov)$values))
+  if(mineig<10^-8) cat("Error: Matriu de covariàncies singular. Ab Minimum eigenvalue: ", mineig, ".\nNo es pot fer el chi-squared plot")
+  else{
+    D2<-diag(Xcentr%*%as.matrix(solve(cov))%*%t(Xcentr))
+    (D2<-sort(D2))
+    n<-length(D2)
+   (quantils<-qchisq((c(1:n)-0.5)/n, dim(data)[2]))
+    plot(quantils,D2, main=main)
+    abline(0, 1)
+  }
+}
+
+```
+
+Per testar la igualtat de matrius de covariàncies farem servir el Box's M Test, un test d'hipòtesi que contrasta igualtat de matriu de covariàncies Farem servir la implementació de la funció `boxM` del paquet `heplots`. La hipòtesi nul·la del test és la igualtat de matrius de covariància, per tant, un p-valor menor al nivell de significació ( $\alpha = 0.05$ ) indicaria que les matrius de covariància són diferents.
+
+Les dades utilitzades per al LDA són les 11 variables sobre la concentració dels elements, així que aplicarem `chisqplot` i `boxM` a aquestes dades. Pel QDA hem fet servir el resultat dels components principals, per tant, els aplicarem en aquests.
+
+Primer tractarem la normalitat multivariant:
+
+```{r fig.height=4, fig.width=4}
+chisqplot(dd[dd$counterfeit==0, 2:12], main="Chi-sq plot (Dades no contraban)")
+chisqplot(dd[dd$counterfeit==1, 2:12], main="Chi-sq plot (Dades contraban)")
+
+```
+
+Fent el chi-squared plot de les dades de no contraban observem que aquestes no s'ajusten gaire bé a una normal multivariant: el plot obtingut no és lineal, hi ha uns puja-baixes que ens fan descartar la normalitat.
+
+Pel que fa a les dades de contraban, la matriu de covariàncies és singular i, per tant, la distribució de les nostres dades no és normal multivariant: resulta impossible fer el chi-squared plot atès que les fórmules utilitzades requereixen la inversió d'aquesta matriu.
+
+```{r fig.height=5, fig.width=10}
+par(mfrow=c(1,2))
+chisqplot(pca$scores[dd$counterfeit==0,1:3], main="Chi-sq plot (PCA no contraban)")
+chisqplot(pca$scores[dd$counterfeit==1,1:3], main="Chi-sq plot (PCA contraban)")
+
+```
+
+Per les dades de contraban observem un altre cop que les dades no s'ajusten gaire bé a la normalitat multivariant suposada.
+
+A continuació els resultats del Box's M test per les dades de concentracions químiques i pels PCAs, respectivament:
+
+```{r}
+library(heplots)
+boxM(dd[,2:12],group=dd[,1])
+
+```
+
+No descartem igualtat de matrius de covariància ja que el p-valor es major que el nivell de significació. Es correspon amb les assumcions del lda.
+
+```{r}
+boxM(pca$scores[,1:3],group=dd[,1])
+
+```
+
+Pels PCAs, la hipòtesi nula és descartada, pel p-valor ($1.11e-09$), i, per tant, acceptem que les matrius de covariància són diferents. Les assumcions del qda sobre la matriu de covariàncies es compleixen.
+
+Tot i això, és sabut que aquest test no és gaire fiable quan les dades no segueixen molt bé una normal multivariant. Fent els chi-squared plot hem vist que no és el cas per les nostres dades. A més, també es veu molt afectat per una mostra petita i, aquest és el cas pel nostre conjunt de dades, com ja hem mencionat anteriorment.
+
+Sigui com sigui, els dos models QDA i LDA són molt bons en el que es refereix a la classificació de les dades, tot i no complir les assumpcions de normalitat multivariant.
+
+
+## Resultats i conclusions
+
+En aquest projecte hem pogut usar la majoria de mètodes estudiats a l'assignatura d'anàlisi de dades per a variables contínues.
+
+Una vegada més veiem que, tot i que no existeix cap model correcte, n'hi ha uns quants que són d'allò més útils. Per exemple, tant LDA com QDA assumeixen que les dades es distribueixin seguint una normal multivariant i, com hem comprovat funcionen molt bé. Utilitzant el mètode del LOOCV hem aconseguit estimar la precisió de la predicció dels dos models: 93.75% per LDA i 96.87% per QDA.
+
+A més hem vist quins dels components químics són més importants per identificar els whiskies de contraban en el mètode LDA: el sofre i el potassi.
+
+En conclusió, hem pogut utilitzar les tècniques d'anàlisi discriminant amb èxit encara que les assumpcions fetes pels mètodes no es complissin gaire bé. Per una banda, les dades utilitzades no s'ajustaven gaire bé a la normalitat multivariant. Per l'altra, les assumpcions sobre les matrius de covariàncies dels grups sí que se satisfeien, però aquests resultats no són del tot fiables perquè el test utilitzat era molt sensible a la mida del dataset (molt petit) i a la manca de normalitat multivariant.
+
+# Bibliografia
+J. Graffelman (2020) "Apunts de l'assignatura AD-GCED"
+
+C.A. Shand, R. Wendler, L. Dawson, K. Yates, H. Stephenson (2017).
+"Multivariate Analysis of Scotch Whiskyby Total Reflection X-Ray
+Fluorescence and Chemometric Methods: A Potential Tool in the Identification
+of Counterfeits," Analytica Chimica Acta, Vol. 976, pp. 14-24.
+
+
+\newpage
+
+
+# Annex
+A continuació podeu trobar tot el codi que hem usat per a dur a terme aquest anàlisi:
+
+```{r getlabels, echo = FALSE}
+labs = knitr::all_labels()
+labs = setdiff(labs, c("setup", "get-labels"))
+```
+
+```{r allcode, ref.label = labs, eval = FALSE, echo = TRUE}
+```
+
+Aquest informe ha estat generat usant R 3.6.3 i els paquets detallats a continuació:
+```{r}
+sessionInfo()
+```
